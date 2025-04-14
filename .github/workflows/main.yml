@@ -1,0 +1,44 @@
+name: Checkmarx Scan
+
+on:
+  push:
+    branches:
+    - main
+    - master
+
+permissions:
+  contents: read # for actions/checkout to fetch code
+  security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
+  actions: read # only required for a private repository by github/codeql-action/upload-sarif
+  pull-requests: write # needed to write pr decorations
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  
+  # This workflow contains a single job called "build"
+  build:
+    permissions:
+      contents: read # for actions/checkout to fetch code
+      security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
+      actions: read # only required for a private repository by github/codeql-action/upload-sarif
+      pull-requests: write # needed to write pr decoration
+
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # This step checks out a copy of your repository.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      # This step creates the Checkmarx One scan
+      - name: Checkmarx One scan
+        uses: checkmarx/ast-github-action@07d0cdab94ff40a963b419e4d72e80d8ff684b46
+        with:
+          base_uri: ${{ secrets.CX_BASE_URI }} 
+          cx_client_id: ${{ secrets.CX_CLIENT_ID }} 
+          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }} 
+          cx_tenant: ${{ secrets.CX_TENANT }}
+          additional_params: --report-format sarif --output-path . --debug --scan-types "sca"
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cx_result.sarif
