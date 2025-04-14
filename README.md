@@ -2,7 +2,7 @@
 
 ![components](./components.png)
 
-# What is Pal.js UI?
+# What is Pal.js UI?2
 
 Pal.js UI is a set of essential modules for your next React application.
 
