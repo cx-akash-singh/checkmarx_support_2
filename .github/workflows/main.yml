@@ -39,6 +39,6 @@ jobs:
           cx_tenant: ${{ secrets.CX_TENANT }}
           additional_params: --debug
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: cx_result.sarif
