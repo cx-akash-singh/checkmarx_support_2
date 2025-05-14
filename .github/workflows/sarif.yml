@@ -1,0 +1,24 @@
+name: Upload SARIF to GitHub Security
+
+on:
+  push:
+    branches:
+      - master  # Change if needed
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  upload-sarif:
+    name: Upload SARIF
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: pwsh  # Ensure PowerShell is used on Windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'C:\Report\cx_result.sarif'
