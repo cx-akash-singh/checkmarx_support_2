@@ -1,0 +1,151 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+# The Checkmarx One GitHub Action enables you to trigger SAST, SCA, and KICS scans directly from the GitHub workflow.
+# It provides a wrapper around the Checkmarx One CLI Tool which creates a zip archive from your source code repository
+# and uploads it to Checkmarx One for scanning. The Github Action provides easy integration with GitHub while enabling
+# scan customization using the full functionality and flexibility of the CLI tool.
+
+# This is a basic workflow to help you get started with Using Checkmarx One Action,
+# documentation can be found here : https://checkmarx.com/resource/documents/en/34965-68702-checkmarx-one-github-actions.html
+
+name: Checkmarx Scan via workflow
+
+# Controls when the workflow will run
+on:
+  workflow_call:
+    inputs:
+      additional_params:
+        default: ""
+        description: "Additional parameters to pass to the Checkmarx One CLI. Please view the CheckMarx docs for usable values"
+        type: string
+      enable_vuln_gate:
+        default: false
+        description: "Enable the vulnerability gate. If set to true, the workflow will fail if the number of vulnerabilities exceeds the specified limits."
+        type: boolean
+      max_critical_vuln:
+        default: 0
+        description: "Maximum number of critical vulnerabilities to be found in the scan. If this number is exceeded, the workflow will fail when gating is enabled."
+        type: number
+      max_high_vuln:
+        default: 5
+        description: "Maximum number of high vulnerabilities to be found in the scan. If this number is exceeded, the workflow will fail when gating is enabled."
+        type: number
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: ["main"]
+
+permissions:
+  contents: read # for actions/checkout to fetch code
+  security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
+  actions: read # only required for a private repository by github/codeql-action/upload-sarif
+  pull-requests: write # needed to write pr decorations
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "Checkmarx-Scan"
+  Checkmarx-Scan:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    env:
+      MAX_CRITICAL_VULN: 10000
+      MAX_HIGH_VULN: 10000
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # This step checks out a copy of your repository.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      # This step creates the Checkmarx One scan
+      - name: Checkmarx One scan
+        uses: checkmarx/ast-github-action@07d0cdab94ff40a963b419e4d72e80d8ff684b46
+        with:
+          base_uri: ${{ vars.CX_BASE_URI }} # https://providence.cxone.cloud  # This should be replaced by your base uri for Checkmarx One
+          cx_client_id: ${{ secrets.CX_CLIENT_ID }} # This should be created within your Checkmarx One account : https://checkmarx.com/resource/documents/en/34965-118315-authentication-for-checkmarx-one-cli.html#UUID-a4e31a96-1f36-6293-e95a-97b4b9189060_UUID-4123a2ff-32d0-2287-8dd2-3c36947f675e
+          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }} # This should be created within your Checkmarx One account : https://checkmarx.com/resource/documents/en/34965-118315-authentication-for-checkmarx-one-cli.html#UUID-a4e31a96-1f36-6293-e95a-97b4b9189060_UUID-4123a2ff-32d0-2287-8dd2-3c36947f675e
+          cx_tenant: ${{ vars.CX_TENANT }} # This should be replaced by your tenant for Checkmarx One
+          additional_params: --report-format sarif${{ inputs.enable_vuln_gate &&  ',json' || ''}} --output-path . --output-name cx_result ${{ inputs.additional_params }}
+      - name: Docker Logout
+        run: docker logout
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          # Path to SARIF file relative to the root of the repository
+          sarif_file: cx_result.sarif
+      # If the vulnerability gate is enabled, this step will fail the workflow if the number of vulnerabilities exceeds the specified limits.
+      - name: Check vulnerability gate
+        id: analyze_results
+        if: ${{ inputs.enable_vuln_gate }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+
+          # First try the specific file we want
+          if [ -f "cx_result.json" ]; then
+            RESULTS_FILE="cx_result.json"
+            echo "Found the expected results file: $RESULTS_FILE"
+          else
+            echo "Warning: cx_results.json not found, searching for alternatives..."
+            # Check for other possible filenames as fallback
+            if [ -f "cx_results.json.json" ]; then
+              RESULTS_FILE="cx_results.json.json"
+            elif [ -f "cx_results.json" ]; then
+              RESULTS_FILE="cx_results.json"
+            else
+              echo "Error: Expected JSON results file not found"
+              echo "Files in current directory:"
+              ls -la
+              echo "failed=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "Using results file: $RESULTS_FILE"
+
+          # Add error handling to jq commands with fallback to 0 if parsing fails
+          CRITICAL_COUNT=$(jq '.results | map(select(.severity == "CRITICAL")) | length' $RESULTS_FILE 2>/dev/null || echo 0)
+          HIGH_COUNT=$(jq '.results | map(select(.severity == "HIGH")) | length' $RESULTS_FILE 2>/dev/null || echo 0)
+          MEDIUM_COUNT=$(jq '.results | map(select(.severity == "MEDIUM")) | length' $RESULTS_FILE 2>/dev/null || echo 0)
+          LOW_COUNT=$(jq '.results | map(select(.severity == "LOW")) | length' $RESULTS_FILE 2>/dev/null || echo 0)
+
+          echo "Vulnerability Summary:" 
+          echo "Critical: $CRITICAL_COUNT"
+          echo "High: $HIGH_COUNT"
+          echo "Medium: $MEDIUM_COUNT"
+          echo "Low: $LOW_COUNT"
+
+          # Check thresholds
+          FAILED=false
+
+          if [ "$CRITICAL_COUNT" -gt "$MAX_CRITICAL_VULN" ]; then
+            echo "::error::Critical vulnerabilities ($CRITICAL_COUNT) exceed threshold ($MAX_CRITICAL_VULN)"
+            FAILED=true
+          fi
+
+          if [ "$HIGH_COUNT" -gt "$MAX_HIGH_VULN" ]; then
+            echo "::error::High vulnerabilities ($HIGH_COUNT) exceed threshold ($MAX_HIGH_VULN)"
+            FAILED=true
+          fi
+
+          # Set output variable for next steps
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+      # Fail the build if thresholds are exceeded
+      - name: Fail if vulnerability thresholds exceeded
+        if: ${{ inputs.enable_vuln_gate && steps.analyze_results.outputs.failed == 'true' }}
+        run: |
+          echo "=============================================================="
+          echo "SECURITY SCAN FAILED: Vulnerability thresholds exceeded"
+          echo "Critical vulnerabilities threshold: $MAX_CRITICAL_VULN"
+          echo "High vulnerabilities threshold: $MAX_HIGH_VULN"
+          echo "=============================================================="
+          echo "Please review the scan results and address the security issues."
+          exit 1
+
+      # - name: Upload SARIF results
+      #   run: |
+      #     gh api --method POST /repos/${{ github.repository }}/code-scanning/sarifs \
+      #       -f commit_sha=$GITHUB_SHA \
+      #       -f ref=$GITHUB_REF \
+      #       -f sarif=$(gzip -c cx_result.sarif | base64 -w0)
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
